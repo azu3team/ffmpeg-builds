@@ -1,0 +1,282 @@
+#!/bin/bash
+
+# FFmpeg LGPL build script for macOS (Apple Silicon)
+# Based on mifi/ffmpeg-build-script (MIT License)
+# Modified: removed GPL components (x264, x265) for LGPL-only distribution
+
+export MACOSX_DEPLOYMENT_TARGET=12.0
+
+PROGNAME=$(basename "$0")
+FFMPEG_VERSION=8.0
+CWD=$(pwd)
+PACKAGES="$CWD/packages"
+WORKSPACE="$CWD/workspace"
+CFLAGS="-I$WORKSPACE/include"
+LDFLAGS="-L$WORKSPACE/lib"
+LDEXEFLAGS=""
+EXTRALIBS="-ldl -lpthread -lm -lz"
+CONFIGURE_OPTIONS=()
+
+FFMPEG_URL="https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n$FFMPEG_VERSION.tar.gz"
+
+command_exists() {
+  if ! [[ -x $(command -v "$1") ]]; then
+    return 1
+  fi
+  return 0
+}
+
+if command_exists "clang++"; then
+  export CC=$(which clang)
+  export CXX=$(which clang++)
+else
+  echo "clang not found. Install Xcode Command Line Tools."
+  exit 1
+fi
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  if [[ "$(uname -m)" == "arm64" ]]; then
+    export ARCH=arm64
+  else
+    export ARCH=x86_64
+  fi
+  export CC="$CC -arch $ARCH"
+  export CFLAGS="$CFLAGS -arch $ARCH"
+  export LDFLAGS="$LDFLAGS -arch $ARCH"
+fi
+
+if [[ -n "$NUMJOBS" ]]; then
+  MJOBS="$NUMJOBS"
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+  MJOBS=$(sysctl -n machdep.cpu.thread_count)
+  CONFIGURE_OPTIONS=("--enable-videotoolbox")
+  MACOS_LIBTOOL="$(which libtool)"
+else
+  MJOBS=4
+fi
+
+make_dir() {
+  rm -rf "$1"
+  mkdir "$1" || { printf "\nFailed to create dir %s" "$1"; exit 1; }
+}
+
+download() {
+  DOWNLOAD_PATH="$PACKAGES"
+  DOWNLOAD_FILE="${2:-"${1##*/}"}"
+
+  if [[ "$DOWNLOAD_FILE" =~ tar. ]]; then
+    TARGETDIR="${DOWNLOAD_FILE%.*}"
+    TARGETDIR="${3:-"${TARGETDIR%.*}"}"
+  else
+    TARGETDIR="${3:-"${DOWNLOAD_FILE%.*}"}"
+  fi
+
+  if [ ! -f "$DOWNLOAD_PATH/$DOWNLOAD_FILE" ]; then
+    echo "Downloading $1 as $DOWNLOAD_FILE"
+    curl -L --silent -o "$DOWNLOAD_PATH/$DOWNLOAD_FILE" "$1"
+    if [ $? -ne 0 ]; then
+      echo "Failed to download $1. Retrying in 10 seconds"
+      sleep 10
+      curl -L --silent -o "$DOWNLOAD_PATH/$DOWNLOAD_FILE" "$1"
+      if [ $? -ne 0 ]; then
+        echo "Failed to download $1"
+        exit 1
+      fi
+    fi
+    echo "... Done"
+  else
+    echo "$DOWNLOAD_FILE already downloaded."
+  fi
+
+  make_dir "$DOWNLOAD_PATH/$TARGETDIR"
+
+  if [[ "$DOWNLOAD_FILE" == *"patch"* ]]; then return; fi
+
+  if [ -n "$3" ]; then
+    tar -xvf "$DOWNLOAD_PATH/$DOWNLOAD_FILE" -C "$DOWNLOAD_PATH/$TARGETDIR" 2>/dev/null >/dev/null || { echo "Failed to extract $DOWNLOAD_FILE"; exit 1; }
+  else
+    tar -xvf "$DOWNLOAD_PATH/$DOWNLOAD_FILE" -C "$DOWNLOAD_PATH/$TARGETDIR" --strip-components 1 2>/dev/null >/dev/null || { echo "Failed to extract $DOWNLOAD_FILE"; exit 1; }
+  fi
+
+  echo "Extracted $DOWNLOAD_FILE"
+  cd "$DOWNLOAD_PATH/$TARGETDIR" || exit 1
+}
+
+execute() {
+  echo "$ $*"
+  OUTPUT=$("$@" 2>&1)
+  if [ $? -ne 0 ]; then
+    echo "$OUTPUT"
+    echo "Failed to Execute $*" >&2
+    exit 1
+  fi
+}
+
+build() {
+  echo ""
+  echo "building $1 - version $2"
+  echo "======================="
+  CURRENT_PACKAGE_VERSION=$2
+  if [ -f "$PACKAGES/$1.done" ]; then
+    if grep -Fx "$2" "$PACKAGES/$1.done" >/dev/null; then
+      echo "$1 version $2 already built."
+      return 1
+    fi
+  fi
+  return 0
+}
+
+build_done() {
+  echo "$2" > "$PACKAGES/$1.done"
+}
+
+verify_binary_type() {
+  if ! command_exists "file"; then return; fi
+  BINARY_TYPE=$(file "$WORKSPACE/bin/ffmpeg" | sed -n 's/^.*\:\ \(.*$\)/\1/p')
+  echo ""
+  echo "Built binary: ${BINARY_TYPE}"
+}
+
+echo "ffmpeg-builds (LGPL)"
+echo "====================="
+echo "Using $MJOBS make jobs"
+echo ""
+
+mkdir -p "$PACKAGES"
+mkdir -p "$WORKSPACE"
+
+export PATH="${WORKSPACE}/bin:$PATH"
+PKG_CONFIG_PATH="$WORKSPACE/lib/pkgconfig"
+export PKG_CONFIG_PATH
+
+##
+## Dependencies
+##
+
+if build "zlib" "1.3.1"; then
+  download "https://github.com/madler/zlib/releases/download/v$CURRENT_PACKAGE_VERSION/zlib-$CURRENT_PACKAGE_VERSION.tar.gz"
+  execute ./configure --static --prefix="${WORKSPACE}"
+  execute make -j $MJOBS
+  execute make install
+  build_done "zlib" $CURRENT_PACKAGE_VERSION
+fi
+
+if build "openssl" "3.5.2"; then
+  download "https://github.com/openssl/openssl/archive/refs/tags/openssl-$CURRENT_PACKAGE_VERSION.tar.gz" "openssl-$CURRENT_PACKAGE_VERSION.tar.gz"
+  execute ./Configure --prefix="${WORKSPACE}" --openssldir="${WORKSPACE}" --libdir="lib" --with-zlib-include="${WORKSPACE}"/include/ --with-zlib-lib="${WORKSPACE}"/lib no-shared zlib
+  execute make -j $MJOBS
+  execute make install_sw
+  build_done "openssl" $CURRENT_PACKAGE_VERSION
+fi
+CONFIGURE_OPTIONS+=("--enable-openssl")
+
+##
+## Codecs (LGPL only — no x264, no x265)
+##
+
+# libvpx (VP8/VP9) — BSD license
+if build "libvpx" "1.15.2"; then
+  download "https://github.com/webmproject/libvpx/archive/refs/tags/v$CURRENT_PACKAGE_VERSION.tar.gz" "libvpx-$CURRENT_PACKAGE_VERSION.tar.gz"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed "s/,--version-script//g" build/make/Makefile >build/make/Makefile.patched
+    sed "s/-Wl,--no-undefined -Wl,-soname/-Wl,-undefined,error -Wl,-install_name/g" build/make/Makefile.patched >build/make/Makefile
+  fi
+  execute ./configure --prefix="${WORKSPACE}" --disable-unit-tests --disable-shared --disable-examples --as=yasm --enable-vp9-highbitdepth
+  execute make -j $MJOBS
+  execute make install
+  build_done "libvpx" $CURRENT_PACKAGE_VERSION
+fi
+CONFIGURE_OPTIONS+=("--enable-libvpx")
+
+# libwebp — BSD license
+if build "libwebp" "1.6.0"; then
+  CPPFLAGS=
+  download "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-$CURRENT_PACKAGE_VERSION.tar.gz" "libwebp-$CURRENT_PACKAGE_VERSION.tar.gz"
+  make_dir build
+  cd build || exit
+  execute cmake -DCMAKE_INSTALL_PREFIX="${WORKSPACE}" -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_BINDIR=bin -DCMAKE_INSTALL_INCLUDEDIR=include -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF -DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_EXTRAS=OFF -DWEBP_BUILD_ANIM_UTILS=OFF ../
+  execute make -j $MJOBS
+  execute make install
+  build_done "libwebp" $CURRENT_PACKAGE_VERSION
+fi
+CONFIGURE_OPTIONS+=("--enable-libwebp")
+
+# dav1d (AV1 decoder) — BSD license
+if command_exists "python3" && command_exists "meson"; then
+  if build "dav1d" "1.5.1"; then
+    download "https://code.videolan.org/videolan/dav1d/-/archive/$CURRENT_PACKAGE_VERSION/dav1d-$CURRENT_PACKAGE_VERSION.tar.gz"
+    make_dir build
+    execute meson build --prefix="${WORKSPACE}" --buildtype=release --default-library=static --libdir="${WORKSPACE}"/lib
+    execute ninja -C build
+    execute ninja -C build install
+    build_done "dav1d" $CURRENT_PACKAGE_VERSION
+  fi
+  CONFIGURE_OPTIONS+=("--enable-libdav1d")
+fi
+
+# SVT-AV1 (AV1 encoder) — BSD license
+if build "svtav1" "3.1.2"; then
+  download "https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v$CURRENT_PACKAGE_VERSION/SVT-AV1-v$CURRENT_PACKAGE_VERSION.tar.gz" "svtav1-$CURRENT_PACKAGE_VERSION.tar.gz"
+  cd "${PACKAGES}"/svtav1-$CURRENT_PACKAGE_VERSION//Build/linux || exit
+  execute cmake -DCMAKE_INSTALL_PREFIX="${WORKSPACE}" -DENABLE_SHARED=off -DBUILD_SHARED_LIBS=OFF ../.. -G"Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+  execute make -j $MJOBS
+  execute make install
+  execute cp SvtAv1Enc.pc "${WORKSPACE}/lib/pkgconfig/"
+  build_done "svtav1" $CURRENT_PACKAGE_VERSION
+fi
+CONFIGURE_OPTIONS+=("--enable-libsvtav1")
+
+##
+## FFmpeg (LGPL build)
+##
+
+EXTRA_VERSION=""
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  EXTRA_VERSION="${FFMPEG_VERSION}-lgpl"
+fi
+
+build "ffmpeg" "$FFMPEG_VERSION"
+download "${FFMPEG_URL}" "FFmpeg-release-$FFMPEG_VERSION.tar.gz"
+./configure "${CONFIGURE_OPTIONS[@]}" \
+  --disable-debug \
+  --disable-doc \
+  --disable-shared \
+  --enable-pthreads \
+  --enable-static \
+  --enable-version3 \
+  --extra-cflags="${CFLAGS}" \
+  --extra-ldexeflags="${LDEXEFLAGS}" \
+  --extra-ldflags="${LDFLAGS}" \
+  --extra-libs="${EXTRALIBS}" \
+  --pkgconfigdir="$WORKSPACE/lib/pkgconfig" \
+  --pkg-config-flags="--static" \
+  --prefix="${WORKSPACE}" \
+  --extra-version="${EXTRA_VERSION}" \
+  \
+  --disable-securetransport \
+  --disable-ffplay \
+  --disable-lzma \
+  --enable-runtime-cpudetect \
+  --enable-avfilter \
+  --enable-filters \
+  \
+  --disable-xlib \
+  --disable-libxcb-shm \
+  --disable-libxcb-xfixes \
+  --disable-libxcb-shape \
+  --disable-outdevs \
+  --disable-indevs \
+  --enable-indev=lavfi
+
+execute make -j $MJOBS
+execute make install
+
+verify_binary_type
+
+echo ""
+echo "Build complete. Binaries in: $WORKSPACE/bin/"
+echo "  ffmpeg:  $(du -h "$WORKSPACE/bin/ffmpeg" | cut -f1)"
+echo "  ffprobe: $(du -h "$WORKSPACE/bin/ffprobe" | cut -f1)"
+echo ""
+echo "License: LGPL (no GPL codecs included)"
+echo "Codecs: videotoolbox (macOS HW), libvpx, libwebp, dav1d, svt-av1"
