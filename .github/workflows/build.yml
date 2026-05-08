@@ -38,6 +38,7 @@ jobs:
             echo "ERROR: GPL flag detected in LGPL build!"
             exit 1
           fi
+          bash ./verify-asr-poc-filters.sh ./workspace/bin/ffmpeg
 
       - name: Package
         run: |
@@ -85,6 +86,8 @@ jobs:
           unzip -l ffmpeg-lgpl-win32-x64.zip
           echo "---"
           du -sh ffmpeg-lgpl-win32-x64.zip
+          unzip -q ffmpeg-lgpl-win32-x64.zip -d verify-win
+          bash ./verify-asr-poc-filters.sh ./verify-win/ffmpeg.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

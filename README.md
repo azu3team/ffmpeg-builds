@@ -51,3 +51,19 @@ brew install nasm yasm python-setuptools meson ninja
 git tag v8.0-lgpl-1
 git push origin v8.0-lgpl-1
 ```
+
+## ASR POC capabilities
+
+The release workflow verifies the LGPL build has the audio filters needed by
+Sucolab ASR experiments:
+
+- `silencedetect`, `silenceremove`
+- `loudnorm`, `speechnorm`, `volume`
+- `highpass`, `lowpass`, `afftdn`, `arnndn`, `anequalizer`
+- `atrim`, `asetpts`, `aresample`
+
+Run locally:
+
+```bash
+./verify-asr-poc-filters.sh ./workspace/bin/ffmpeg
+```
