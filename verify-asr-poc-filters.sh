@@ -2,22 +2,14 @@
 set -euo pipefail
 
 FFMPEG_BIN="${1:-./workspace/bin/ffmpeg}"
+MODE="${2:-exec}"
 
-if [[ ! -x "$FFMPEG_BIN" ]]; then
-  echo "ERROR: ffmpeg binary not found or not executable: $FFMPEG_BIN" >&2
+if [[ ! -f "$FFMPEG_BIN" ]]; then
+  echo "ERROR: ffmpeg binary not found: $FFMPEG_BIN" >&2
   exit 1
 fi
 
 echo "Verifying ASR POC FFmpeg capabilities: $FFMPEG_BIN"
-"$FFMPEG_BIN" -version
-
-buildconf="$("$FFMPEG_BIN" -buildconf 2>&1)"
-if grep -q -- '--enable-gpl' <<<"$buildconf"; then
-  echo "ERROR: GPL flag detected in LGPL build" >&2
-  exit 1
-fi
-
-filters="$("$FFMPEG_BIN" -hide_banner -filters 2>&1)"
 required_filters=(
   afftdn
   anequalizer
@@ -34,9 +26,45 @@ required_filters=(
   volume
 )
 
+if [[ "$MODE" == "exec" ]]; then
+  if [[ ! -x "$FFMPEG_BIN" ]]; then
+    echo "ERROR: ffmpeg binary is not executable: $FFMPEG_BIN" >&2
+    exit 1
+  fi
+
+  "$FFMPEG_BIN" -version
+
+  buildconf="$("$FFMPEG_BIN" -buildconf 2>&1)"
+  if grep -q -- '--enable-gpl' <<<"$buildconf"; then
+    echo "ERROR: GPL flag detected in LGPL build" >&2
+    exit 1
+  fi
+
+  filters="$("$FFMPEG_BIN" -hide_banner -filters 2>&1)"
+  filter_pattern='^[[:space:]]*[TSC\.A-Z|]+[[:space:]]+%s[[:space:]]'
+elif [[ "$MODE" == "strings" ]]; then
+  if ! command -v strings >/dev/null 2>&1; then
+    echo "ERROR: strings command is required for strings mode" >&2
+    exit 1
+  fi
+
+  binary_strings="$(strings "$FFMPEG_BIN")"
+  if grep -q -- '--enable-gpl' <<<"$binary_strings"; then
+    echo "ERROR: GPL flag detected in LGPL build" >&2
+    exit 1
+  fi
+
+  filters="$binary_strings"
+  filter_pattern='^%s$'
+else
+  echo "ERROR: unknown verification mode: $MODE" >&2
+  exit 1
+fi
+
 missing=()
 for filter in "${required_filters[@]}"; do
-  if ! grep -Eq "^[[:space:]]*[TSC\.A-Z|]+[[:space:]]+$filter[[:space:]]" <<<"$filters"; then
+  pattern="$(printf "$filter_pattern" "$filter")"
+  if ! grep -Eq "$pattern" <<<"$filters"; then
     missing+=("$filter")
   fi
 done

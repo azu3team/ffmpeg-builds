@@ -87,7 +87,7 @@ jobs:
           echo "---"
           du -sh ffmpeg-lgpl-win32-x64.zip
           unzip -q ffmpeg-lgpl-win32-x64.zip -d verify-win
-          bash ./verify-asr-poc-filters.sh ./verify-win/ffmpeg.exe
+          bash ./verify-asr-poc-filters.sh ./verify-win/ffmpeg.exe strings
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

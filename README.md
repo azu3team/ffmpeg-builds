@@ -66,4 +66,5 @@ Run locally:
 
 ```bash
 ./verify-asr-poc-filters.sh ./workspace/bin/ffmpeg
+./verify-asr-poc-filters.sh ./dist/ffmpeg.exe strings
 ```
