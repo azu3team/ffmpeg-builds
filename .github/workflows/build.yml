@@ -66,34 +66,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download BtbN LGPL shared build
+      # BtbN の月末 autobuild(長期保持される)に版固定し、SHA256 を検証する。
+      # 更新時は BTBN_TAG / BTBN_ASSET / BTBN_SHA256 の 3 つを同時に変える。
+      - name: Download BtbN LGPL shared build (pinned)
+        env:
+          BTBN_TAG: autobuild-2026-08-31-13-27
+          BTBN_ASSET: ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-shared-8.1
+          BTBN_SHA256: e9712ffbdb03ef71bbab660c75b835bfe698ef6fad0247c76d8d394a39a3db63
         run: |
-          curl -L -o btbn.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip"
-          unzip btbn.zip
+          curl -fL -o btbn.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/${BTBN_TAG}/${BTBN_ASSET}.zip"
+          echo "${BTBN_SHA256}  btbn.zip" | sha256sum -c -
+          unzip -q btbn.zip
+          mv "${BTBN_ASSET}" btbn
 
-      - name: Repackage
+      - name: Repackage runtime (ffmpeg.exe / ffprobe.exe / DLL)
         run: |
           mkdir -p dist
-          # Copy only needed files: ffmpeg.exe, ffprobe.exe, and DLLs
-          cp ffmpeg-master-latest-win64-lgpl-shared/bin/ffmpeg.exe dist/
-          cp ffmpeg-master-latest-win64-lgpl-shared/bin/ffprobe.exe dist/
-          cp ffmpeg-master-latest-win64-lgpl-shared/bin/*.dll dist/
+          cp btbn/bin/ffmpeg.exe dist/
+          cp btbn/bin/ffprobe.exe dist/
+          cp btbn/bin/*.dll dist/
           cd dist && zip -r ../ffmpeg-lgpl-win32-x64.zip .
+
+      # engine(sucolab-desktop-engine)が link するための SDK。runtime zip と同じ BtbN build 由来なので
+      # header / import library と DLL の ABI が一致する。DLL は runtime zip 側で配る(SDK には入れない)。
+      - name: Package SDK (include / import libraries)
+        run: |
+          mkdir -p sdk
+          cp -r btbn/include sdk/include
+          cp -r btbn/lib sdk/lib
+          cp btbn/LICENSE.txt sdk/ 2>/dev/null || true
+          cd sdk && zip -r ../ffmpeg-lgpl-win32-x64-sdk.zip .
 
       - name: Verify contents
         run: |
           unzip -l ffmpeg-lgpl-win32-x64.zip
           echo "---"
-          du -sh ffmpeg-lgpl-win32-x64.zip
+          unzip -l ffmpeg-lgpl-win32-x64-sdk.zip | tail -n 5
+          unzip -l ffmpeg-lgpl-win32-x64-sdk.zip | grep -E "lib/(avcodec|avutil|swresample).lib"
+          echo "---"
+          sha256sum ffmpeg-lgpl-win32-x64.zip ffmpeg-lgpl-win32-x64-sdk.zip
+          # GPL build でないことの確認(LGPL shared build の ffmpeg.exe は --enable-gpl を持たない)
+          if strings btbn/bin/avcodec-*.dll | grep -q -- "--enable-gpl"; then echo "ERROR: GPL flag detected"; exit 1; fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-lgpl-win32-x64
-          path: ffmpeg-lgpl-win32-x64.zip
+          path: |
+            ffmpeg-lgpl-win32-x64.zip
+            ffmpeg-lgpl-win32-x64-sdk.zip
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ffmpeg-lgpl-win32-x64.zip
+          files: |
+            ffmpeg-lgpl-win32-x64.zip
+            ffmpeg-lgpl-win32-x64-sdk.zip
