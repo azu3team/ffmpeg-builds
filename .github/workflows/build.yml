@@ -86,6 +86,9 @@ jobs:
           cp btbn/bin/ffprobe.exe dist/
           cp btbn/bin/*.dll dist/
           cd dist && zip -r ../ffmpeg-lgpl-win32-x64.zip .
+          # desktop の boot 時 DL は .tar.gz を既存の tar 経路で展開する(zip は PowerShell 依存のため廃止方向)。
+          # 中身は zip と同一。
+          tar czf ../ffmpeg-lgpl-win32-x64.tar.gz .
 
       # engine(sucolab-desktop-engine)が link するための SDK。runtime zip と同じ BtbN build 由来なので
       # header / import library と DLL の ABI が一致する。DLL は runtime zip 側で配る(SDK には入れない)。
@@ -101,10 +104,12 @@ jobs:
         run: |
           unzip -l ffmpeg-lgpl-win32-x64.zip
           echo "---"
+          tar tzf ffmpeg-lgpl-win32-x64.tar.gz
+          echo "---"
           unzip -l ffmpeg-lgpl-win32-x64-sdk.zip | tail -n 5
           unzip -l ffmpeg-lgpl-win32-x64-sdk.zip | grep -E "lib/(avcodec|avutil|swresample).lib"
           echo "---"
-          sha256sum ffmpeg-lgpl-win32-x64.zip ffmpeg-lgpl-win32-x64-sdk.zip
+          sha256sum ffmpeg-lgpl-win32-x64.zip ffmpeg-lgpl-win32-x64.tar.gz ffmpeg-lgpl-win32-x64-sdk.zip
           # GPL build でないことの確認(LGPL shared build の ffmpeg.exe は --enable-gpl を持たない)
           if strings btbn/bin/avcodec-*.dll | grep -q -- "--enable-gpl"; then echo "ERROR: GPL flag detected"; exit 1; fi
 
@@ -114,6 +119,7 @@ jobs:
           name: ffmpeg-lgpl-win32-x64
           path: |
             ffmpeg-lgpl-win32-x64.zip
+            ffmpeg-lgpl-win32-x64.tar.gz
             ffmpeg-lgpl-win32-x64-sdk.zip
 
       - name: Release
@@ -122,4 +128,5 @@ jobs:
         with:
           files: |
             ffmpeg-lgpl-win32-x64.zip
+            ffmpeg-lgpl-win32-x64.tar.gz
             ffmpeg-lgpl-win32-x64-sdk.zip
