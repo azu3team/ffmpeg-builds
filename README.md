@@ -9,6 +9,7 @@
 | プラットフォーム | ファイル | ビルド方式 |
 |---|---|---|
 | macOS arm64 (Apple Silicon) | `ffmpeg-lgpl-darwin-arm64.tar.gz` | ソースビルド |
+| macOS arm64 SDK (macOS 12+) | `ffmpeg-lgpl-darwin-arm64-sdk.tar.gz` | FFmpeg n8.1.2 shared: `lib/` の dylib・`include/`・ライセンス・構成。engine が link して自身の bundle に同梱する用途 |
 | Windows x64 | `ffmpeg-lgpl-win32-x64.zip` | BtbN LGPL shared リパッケージ(版固定 + SHA256 検証)= `ffmpeg.exe` / `ffprobe.exe` / DLL |
 | Windows x64 SDK | `ffmpeg-lgpl-win32-x64-sdk.zip` | 同じ BtbN build の `include/` + `lib/`(import library)。sucolab-desktop-engine の link 用。DLL は上の runtime zip 側 |
 
@@ -43,6 +44,20 @@ brew install nasm yasm python-setuptools meson ninja
 ./build-ffmpeg-macos
 # 出力: workspace/bin/ffmpeg, workspace/bin/ffprobe
 ```
+
+engine 用 SDK は CLI と独立した build で、`avformat` / `avcodec` / `avutil` / `swscale` / `swresample` を含む。
+libvpx 1.15.2 を静的に組み込み、VideoToolbox と system zlib を有効にする。CLI・一般ドキュメントは含まない。
+
+```bash
+# clang / make / perl / pkg-config と Xcode Command Line Tools を使用
+./build-ffmpeg-macos-sdk build "$PWD/workspace-sdk"
+./build-ffmpeg-macos-sdk verify "$PWD/workspace-sdk" "$PWD/workspace/bin/ffmpeg"
+./build-ffmpeg-macos-sdk package "$PWD/workspace-sdk"
+# 出力: workspace-sdk/ffmpeg-lgpl-darwin-arm64-sdk.tar.gz
+```
+
+SDK の dylib は `@rpath` 参照。engine bundle の `Contents/Frameworks` 等へまとめて配置し、
+engine に対応する `LC_RPATH` を設定して、同梱する各 dylib を app と同じ署名 identity で署名する。
 
 ### CI
 
