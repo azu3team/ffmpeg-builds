@@ -52,11 +52,28 @@ jobs:
           name: ffmpeg-lgpl-darwin-arm64
           path: ffmpeg-lgpl-darwin-arm64.tar.gz
 
+      - name: Build engine SDK (FFmpeg 8.1 shared libraries)
+        run: ./build-ffmpeg-macos-sdk build "$RUNNER_TEMP/ffmpeg-macos-sdk"
+
+      - name: Verify engine SDK (dependencies / decoders / VP9 alpha)
+        run: ./build-ffmpeg-macos-sdk verify "$RUNNER_TEMP/ffmpeg-macos-sdk" "$GITHUB_WORKSPACE/workspace/bin/ffmpeg"
+
+      - name: Package engine SDK
+        run: ./build-ffmpeg-macos-sdk package "$RUNNER_TEMP/ffmpeg-macos-sdk"
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-lgpl-darwin-arm64-sdk
+          path: ${{ runner.temp }}/ffmpeg-macos-sdk/ffmpeg-lgpl-darwin-arm64-sdk.tar.gz
+
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ffmpeg-lgpl-darwin-arm64.tar.gz
+          files: |
+            ffmpeg-lgpl-darwin-arm64.tar.gz
+            ${{ runner.temp }}/ffmpeg-macos-sdk/ffmpeg-lgpl-darwin-arm64-sdk.tar.gz
 
   repackage-windows-x64:
     name: Windows x64 (repackage BtbN LGPL)
